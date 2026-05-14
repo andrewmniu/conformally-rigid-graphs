@@ -115,7 +115,9 @@ def _solve_feasibility_sdp(
     for L_bar, r in zip(L_bars, rhs):
         constraints.append(cp.trace(L_bar @ Z) == r)
 
-    prob = cp.Problem(cp.Minimize(0), constraints)
+    # Minimize trace rather than 0: gives MOSEK a non-degenerate dual and
+    # avoids UNKNOWN status on highly underdetermined feasibility problems.
+    prob = cp.Problem(cp.Minimize(cp.trace(Z)), constraints)
 
     solver_upper = solver.upper()
     if solver_upper == 'MOSEK':
@@ -127,7 +129,8 @@ def _solve_feasibility_sdp(
                 'MSK_DPAR_INTPNT_CO_TOL_REL_GAP': tol,
             })
             solver_used = "MOSEK"
-        except (cp.SolverError, Exception):
+        except cp.SolverError as e:
+            print(f"MOSEK failed ({type(e).__name__}): {e}")
             prob.solve(solver=cp.SCS, eps=tol)
             solver_used = "SCS (fallback)"
     elif solver_upper == 'SCS':
@@ -138,7 +141,9 @@ def _solve_feasibility_sdp(
 
     print(f"Solver used: {solver_used}")
 
-    if prob.status in ("optimal", "optimal_inaccurate"):
+    if prob.status in ("optimal", "optimal_inaccurate") or (
+        prob.status == "unknown" and Z.value is not None
+    ):
         Z_val = Z.value
         residuals = np.array([
             float(np.trace(L_bar @ Z_val)) - r
